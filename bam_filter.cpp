@@ -10,7 +10,7 @@
 #include <atomic>
 #include <condition_variable>
 
-const int CHUNK_SIZE = 10000;
+const int CHUNK_SIZE = 5000000;
 
 struct ReadPair {
     bam1_t *read1;
