@@ -4,6 +4,59 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
+#include <mutex>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
+
+const int CHUNK_SIZE = 10000;
+
+struct ReadPair {
+    bam1_t *read1;
+    bam1_t *read2;
+};
+
+struct ThreadData {
+    std::vector<ReadPair> readPairs;
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool ready = false;
+    bool done = false;
+    std::atomic<bool> error{false};
+};
+
+void processReads(ThreadData &data, samFile *out, bam_hdr_t *header, int mapq_threshold) {
+    std::vector<ReadPair> localPairs;
+
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lock(data.mutex);
+            data.cv.wait(lock, [&]{ return data.ready || data.done; });
+
+            if (data.done && data.readPairs.empty()) {
+                return;
+            }
+
+            localPairs.swap(data.readPairs);
+            data.ready = false;
+        }
+
+        for (auto &pair : localPairs) {
+            if (pair.read1->core.qual >= mapq_threshold && pair.read2->core.qual >= mapq_threshold) {
+                if (sam_write1(out, header, pair.read1) < 0 || sam_write1(out, header, pair.read2) < 0) {
+                    fprintf(stderr, "Error writing to output BAM file\n");
+                    data.error = true;
+                    return;
+                }
+            }
+            bam_destroy1(pair.read1);
+            bam_destroy1(pair.read2);
+        }
+
+        localPairs.clear();
+    }
+}
 
 int main(int argc, char *argv[]) {
     if (argc < 4) {
@@ -19,7 +72,6 @@ int main(int argc, char *argv[]) {
     if (argc > 4) {
         num_threads = atoi(argv[4]);
     }
-
 
     // Open input and output BAM files
     samFile *in = sam_open(input_bam, "rb");
@@ -70,38 +122,81 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Read and write reads in pairs
-    bam1_t *b1 = bam_init1();
-    bam1_t *b2 = bam_init1();
-    int ret1, ret2;
+    std::vector<ThreadData> threadData(num_threads);
+    std::vector<std::thread> threads;
 
-    // Read first read of pair
-    while ((ret1 = sam_read1(in, header, b1)) >= 0) {
+    for (int i = 0; i < num_threads; ++i) {
+        threads.emplace_back(processReads, std::ref(threadData[i]), out, header, mapq_threshold);
+    }
+
+    int current_thread = 0;
+    int ret;
+    bam1_t *b = bam_init1();
+
+    // Read and process reads in pairs
+    while ((ret = sam_read1(in, header, b)) >= 0) {
+        ThreadData &data = threadData[current_thread];
+        
+        {
+            std::lock_guard<std::mutex> lock(data.mutex);
+            data.readPairs.push_back({bam_dup1(b), bam_init1()});
+        }
+
         // Read second read of pair
-        ret2 = sam_read1(in, header, b2);
-        // Check for unexpected end of file or error reading second read
-        if (ret2 < 0) {
+        if ((ret = sam_read1(in, header, data.readPairs.back().read2)) < 0) {
             fprintf(stderr, "Unexpected end of file or error reading second read of pair\n");
             break;
         }
 
-        // Check if both reads have MAPQ >= threshold
-        int mapq1 = b1->core.qual;
-        int mapq2 = b2->core.qual;
+        if (data.readPairs.size() >= CHUNK_SIZE) {
+            {
+                std::lock_guard<std::mutex> lock(data.mutex);
+                data.ready = true;
+            }
+            data.cv.notify_one();
+            current_thread = (current_thread + 1) % num_threads;
+        }
 
-        // Write reads to output if both have MAPQ >= threshold
-        if (mapq1 >= mapq_threshold && mapq2 >= mapq_threshold) {
-            if (sam_write1(out, header, b1) < 0 || sam_write1(out, header, b2) < 0) {
-                fprintf(stderr, "Failed to write reads to output\n");
+        // Check for errors in worker threads
+        bool error_occurred = false;
+        for (const auto &data : threadData) {
+            if (data.error) {
+                error_occurred = true;
                 break;
             }
         }
-        // Else discard both reads
+        if (error_occurred) {
+            fprintf(stderr, "Error occurred in worker thread. Stopping processing.\n");
+            break;
+        }
     }
 
-    // Check for errors reading first read
-    bam_destroy1(b1);
-    bam_destroy1(b2);
+    // Signal all threads to finish processing
+    for (auto &data : threadData) {
+        {
+            std::lock_guard<std::mutex> lock(data.mutex);
+            data.ready = true;
+            data.done = true;
+        }
+        data.cv.notify_one();
+    }
+
+    // Wait for all threads to finish
+    for (auto &thread : threads) {
+        thread.join();
+    }
+
+    // Check for any errors in worker threads
+    bool error_occurred = false;
+    for (const auto &data : threadData) {
+        if (data.error) {
+            error_occurred = true;
+            break;
+        }
+    }
+
+    // Clean up
+    bam_destroy1(b);
     bam_hdr_destroy(header);
     sam_close(in);
     sam_close(out);
@@ -111,5 +206,5 @@ int main(int argc, char *argv[]) {
         hts_tpool_destroy(thread_pool.pool);
     }
 
-    return 0;
+    return error_occurred ? 1 : 0;
 }
