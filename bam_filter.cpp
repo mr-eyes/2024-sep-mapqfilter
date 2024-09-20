@@ -20,15 +20,14 @@ int main(int argc, char *argv[]) {
         num_threads = atoi(argv[4]);
     }
 
-
-    // Open input and output BAM files
-    samFile *in = sam_open(input_bam, "rb");
+    // Open input file (SAM format from stdin if "-")
+    samFile *in = sam_open(strcmp(input_bam, "-") == 0 ? "-" : input_bam, "r"); // "r" for SAM input
     if (!in) {
-        fprintf(stderr, "Failed to open input BAM file %s\n", input_bam);
+        fprintf(stderr, "Failed to open input SAM file %s\n", input_bam);
         return 1;
     }
 
-    // Read header from input BAM file
+    // Read header from input SAM file
     bam_hdr_t *header = sam_hdr_read(in);
     if (!header) {
         fprintf(stderr, "Failed to read header from %s\n", input_bam);
@@ -99,7 +98,7 @@ int main(int argc, char *argv[]) {
         // Else discard both reads
     }
 
-    // Check for errors reading first read
+    // Clean up
     bam_destroy1(b1);
     bam_destroy1(b2);
     bam_hdr_destroy(header);
