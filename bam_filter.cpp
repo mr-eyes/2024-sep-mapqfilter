@@ -69,6 +69,12 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Counters for reporting
+    int single_end_count = 0;
+    int unmapped_mate_count = 0;
+    int low_mapq_count = 0;
+    int written_count = 0;
+
     // Read and write reads in pairs
     bam1_t *b1 = bam_init1();
     bam1_t *b2 = bam_init1();
@@ -85,23 +91,33 @@ int main(int argc, char *argv[]) {
         }
 
         // Check if both reads are paired (flag 0x1 set) and mate is not unmapped (flag 0x8 not set)
-        bool b1_paired = (b1->core.flag & 0x1); // && !(b1->core.flag & 0x8);
-        bool b2_paired = (b2->core.flag & 0x1); // && !(b2->core.flag & 0x8);
+        bool b1_paired = (b1->core.flag & 0x1); // Check if first read is paired
+        bool b2_paired = (b2->core.flag & 0x1); // Check if second read is paired
+        bool b1_mate_unmapped = (b1->core.flag & 0x8); // Check if mate of first read is unmapped
+        bool b2_mate_unmapped = (b2->core.flag & 0x8); // Check if mate of second read is unmapped
 
         // Filter out single-end reads or pairs where one mate is unmapped
         if (b1_paired && b2_paired) {
-            // Check if both reads have MAPQ >= threshold
-            int mapq1 = b1->core.qual;
-            int mapq2 = b2->core.qual;
+            if (!b1_mate_unmapped && !b2_mate_unmapped) {
+                // Check if both reads have MAPQ >= threshold
+                int mapq1 = b1->core.qual;
+                int mapq2 = b2->core.qual;
 
-            if (mapq1 >= mapq_threshold && mapq2 >= mapq_threshold) {
-                // Write reads to output if both have MAPQ >= threshold
-                if (sam_write1(out, header, b1) < 0 || sam_write1(out, header, b2) < 0) {
-                    fprintf(stderr, "Failed to write reads to output\n");
-                    break;
+                if (mapq1 >= mapq_threshold && mapq2 >= mapq_threshold) {
+                    // Write reads to output if both have MAPQ >= threshold
+                    if (sam_write1(out, header, b1) < 0 || sam_write1(out, header, b2) < 0) {
+                        fprintf(stderr, "Failed to write reads to output\n");
+                        break;
+                    }
+                    written_count += 2;  // Increment count for both reads in the pair
+                } else {
+                    low_mapq_count += 2;  // Both reads are discarded for low MAPQ
                 }
+            } else {
+                unmapped_mate_count += 2;  // Discarded because one or both mates are unmapped
             }
-            // Else discard both reads
+        } else {
+            single_end_count += 2;  // Discarded as single-end reads (not paired)
         }
     }
 
@@ -116,6 +132,13 @@ int main(int argc, char *argv[]) {
     if (thread_pool.pool) {
         hts_tpool_destroy(thread_pool.pool);
     }
+
+    // Report results
+    printf("Report:\n");
+    printf("Single-end reads discarded: %d\n", single_end_count);
+    printf("Reads discarded due to unmapped mate: %d\n", unmapped_mate_count);
+    printf("Reads discarded due to low MAPQ: %d\n", low_mapq_count);
+    printf("Reads written to output BAM: %d\n", written_count);
 
     return 0;
 }
