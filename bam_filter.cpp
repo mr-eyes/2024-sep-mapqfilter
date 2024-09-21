@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>  // for uint64_t
 
 int main(int argc, char *argv[]) {
     if (argc < 4) {
@@ -69,11 +70,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Counters for reporting
-    int single_end_count = 0;
-    int unmapped_mate_count = 0;
-    int low_mapq_count = 0;
-    int written_count = 0;
+    // Use uint64_t for large counter values
+    uint64_t single_end_count = 0;
+    uint64_t unmapped_mate_count = 0;
+    uint64_t low_mapq_count = 0;
+    uint64_t written_count = 0;
 
     // Read and write reads in pairs
     bam1_t *b1 = bam_init1();
@@ -84,6 +85,7 @@ int main(int argc, char *argv[]) {
     while ((ret1 = sam_read1(in, header, b1)) >= 0) {
         // Read second read of pair
         ret2 = sam_read1(in, header, b2);
+
         // Check for unexpected end of file or error reading second read
         if (ret2 < 0) {
             fprintf(stderr, "Unexpected end of file or error reading second read of pair\n");
@@ -135,10 +137,10 @@ int main(int argc, char *argv[]) {
 
     // Report results
     printf("Report:\n");
-    printf("Single-end reads discarded: %d\n", single_end_count);
-    printf("Reads discarded due to unmapped mate: %d\n", unmapped_mate_count);
-    printf("Reads discarded due to low MAPQ: %d\n", low_mapq_count);
-    printf("Reads written to output BAM: %d\n", written_count);
+    printf("Single-end reads discarded: %" PRIu64 "\n", single_end_count);
+    printf("Reads discarded due to unmapped mate: %" PRIu64 "\n", unmapped_mate_count);
+    printf("Reads discarded due to low MAPQ: %" PRIu64 "\n", low_mapq_count);
+    printf("Reads written to output BAM: %" PRIu64 "\n", written_count);
 
     return 0;
 }
