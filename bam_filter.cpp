@@ -85,8 +85,8 @@ int main(int argc, char *argv[]) {
         }
 
         // Check if both reads are paired (flag 0x1 set) and mate is not unmapped (flag 0x8 not set)
-        bool b1_paired = (b1->core.flag & 0x1) && !(b1->core.flag & 0x8);
-        bool b2_paired = (b2->core.flag & 0x1) && !(b2->core.flag & 0x8);
+        bool b1_paired = (b1->core.flag & 0x1); // && !(b1->core.flag & 0x8);
+        bool b2_paired = (b2->core.flag & 0x1); // && !(b2->core.flag & 0x8);
 
         // Filter out single-end reads or pairs where one mate is unmapped
         if (b1_paired && b2_paired) {
