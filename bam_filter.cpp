@@ -84,18 +84,25 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        // Check if both reads have MAPQ >= threshold
-        int mapq1 = b1->core.qual;
-        int mapq2 = b2->core.qual;
+        // Check if both reads are paired (flag 0x1 set) and mate is not unmapped (flag 0x8 not set)
+        bool b1_paired = (b1->core.flag & 0x1) && !(b1->core.flag & 0x8);
+        bool b2_paired = (b2->core.flag & 0x1) && !(b2->core.flag & 0x8);
 
-        // Write reads to output if both have MAPQ >= threshold
-        if (mapq1 >= mapq_threshold && mapq2 >= mapq_threshold) {
-            if (sam_write1(out, header, b1) < 0 || sam_write1(out, header, b2) < 0) {
-                fprintf(stderr, "Failed to write reads to output\n");
-                break;
+        // Filter out single-end reads or pairs where one mate is unmapped
+        if (b1_paired && b2_paired) {
+            // Check if both reads have MAPQ >= threshold
+            int mapq1 = b1->core.qual;
+            int mapq2 = b2->core.qual;
+
+            if (mapq1 >= mapq_threshold && mapq2 >= mapq_threshold) {
+                // Write reads to output if both have MAPQ >= threshold
+                if (sam_write1(out, header, b1) < 0 || sam_write1(out, header, b2) < 0) {
+                    fprintf(stderr, "Failed to write reads to output\n");
+                    break;
+                }
             }
+            // Else discard both reads
         }
-        // Else discard both reads
     }
 
     // Clean up
